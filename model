@@ -1,0 +1,179 @@
+#include <QList>
+#include <QString>
+
+class C {
+public:
+    C(const QString &name) : name(name) {}
+    QString name;
+};
+
+class B {
+public:
+    B(const QString &name) : name(name) {}
+    void addC(C *c) { cList.append(c); }
+    QList<C*> cList;
+    QString name;
+};
+
+class A {
+public:
+    A(const QString &name) : name(name) {}
+    void addB(B *b) { bList.append(b); }
+    QList<B*> bList;
+    QString name;
+};
+
+
+#include <QAbstractItemModel>
+#include <QModelIndex>
+#include <QVariant>
+
+class TreeItem {
+public:
+    explicit TreeItem(const QVariant &data, TreeItem *parentItem = nullptr)
+        : itemData(data), parentItem(parentItem) {}
+
+    void appendChild(TreeItem *child) {
+        childItems.append(child);
+    }
+
+    TreeItem *child(int row) {
+        return childItems.value(row);
+    }
+
+    int childCount() const {
+        return childItems.count();
+    }
+
+    int row() const {
+        if (parentItem) {
+            auto it = std::find(parentItem->childItems.begin(), parentItem->childItems.end(), this);
+            if (it != parentItem->childItems.end()) {
+                return std::distance(parentItem->childItems.begin(), it);
+            }
+//            return parentItem->childItems.indexOf(const_cast<TreeItem*>(this));
+        }
+        return 0;
+    }
+
+    int columnCount() const {
+        return 1;
+    }
+
+    QVariant data() const {
+        return itemData;
+    }
+
+    TreeItem *parent() {
+        return parentItem;
+    }
+
+private:
+    QList<TreeItem*> childItems;
+    QVariant itemData;
+    TreeItem *parentItem;
+};
+
+class CustomTreeModel : public QAbstractItemModel {
+    Q_OBJECT
+
+public:
+    explicit CustomTreeModel(const QList<A*> &data, QObject *parent = nullptr)
+        : QAbstractItemModel(parent) {
+        rootItem = new TreeItem("Root");
+        setupModelData(data, rootItem);
+    }
+
+    ~CustomTreeModel() {
+        delete rootItem;
+    }
+
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override {
+        if (parent.isValid())
+            return static_cast<TreeItem*>(parent.internalPointer())->columnCount();
+        return rootItem->columnCount();
+    }
+
+    QVariant data(const QModelIndex &index, int role) const override {
+        if (!index.isValid())
+            return QVariant();
+
+        if (role != Qt::DisplayRole)
+            return QVariant();
+
+        TreeItem *item = static_cast<TreeItem*>(index.internalPointer());
+
+        return item->data();
+    }
+
+    Qt::ItemFlags flags(const QModelIndex &index) const override {
+        if (!index.isValid())
+            return Qt::NoItemFlags;
+
+        return QAbstractItemModel::flags(index);
+    }
+
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override {
+        if (!hasIndex(row, column, parent))
+            return QModelIndex();
+
+        TreeItem *parentItem;
+
+        if (!parent.isValid())
+            parentItem = rootItem;
+        else
+            parentItem = static_cast<TreeItem*>(parent.internalPointer());
+
+        TreeItem *childItem = parentItem->child(row);
+        if (childItem)
+            return createIndex(row, column, childItem);
+        else
+            return QModelIndex();
+    }
+
+    QModelIndex parent(const QModelIndex &index) const override {
+        if (!index.isValid())
+            return QModelIndex();
+
+        TreeItem *childItem = static_cast<TreeItem*>(index.internalPointer());
+        TreeItem *parentItem = childItem->parent();
+
+        if (parentItem == rootItem)
+            return QModelIndex();
+
+        return createIndex(parentItem->row(), 0, parentItem);
+    }
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override {
+        TreeItem *parentItem;
+        if (parent.column() > 0)
+            return 0;
+
+        if (!parent.isValid())
+            parentItem = rootItem;
+        else
+            parentItem = static_cast<TreeItem*>(parent.internalPointer());
+
+        return parentItem->childCount();
+    }
+
+private:
+    void setupModelData(const QList<A*> &data, TreeItem *parent) {
+        for (A *a : data) {
+            TreeItem *aItem = new TreeItem(a->name, parent);
+            parent->appendChild(aItem);
+
+            for (B *b : a->bList) {
+                TreeItem *bItem = new TreeItem(b->name, aItem);
+                aItem->appendChild(bItem);
+
+                for (C *c : b->cList) {
+                    TreeItem *cItem = new TreeItem(c->name, bItem);
+                    bItem->appendChild(cItem);
+                }
+            }
+        }
+    }
+
+    TreeItem *rootItem;
+};
